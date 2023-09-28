@@ -1,9 +1,11 @@
 require('dotenv').config();
 const nodemailer = require('nodemailer');
-const User = require('../model/user-model');
-const UserVerification = require('../model/user-verification-model');
+const User = require('../model/userModel');
+const UserEmailVerification = require('../model/userEmailVerificationModel');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+const UserToken = require('../model/userTokenModel');
 
 const signUp = async (req, res) =>{
     try{
@@ -14,15 +16,15 @@ const signUp = async (req, res) =>{
         role = role.trim();
         
         if(email == "" || password == "" || phone =="" || role == ""){
-            res.send({
+            res.status(403).send({
                 status: "Failed", message: "Empty input fields"
             });
         }
         let user = await User.find({email});
         
-        if(user.length){
-            return res.send({
-                status: "Failed", message: "User exist",data:user
+        if(user){
+            return res.status(400).send({
+                status: "Failed", message: "User already exist!"
             });
             
         }else{
@@ -31,7 +33,7 @@ const signUp = async (req, res) =>{
                     email, password: hashedPassword,role, phone
             }).save();
 
-            const verification = await new  UserVerification({
+            const verification = await new  UserEmailVerification({
                 userId: newUser._id,
                 token: crypto.randomBytes(32).toString("hex"),
             }).save();
@@ -40,7 +42,7 @@ const signUp = async (req, res) =>{
             await sendEmailVerification(newUser.email,"Verify Email", url);
 
             res.send({
-                status: "Success", message: "email sent to your account please verify"
+                status: "Success", is_verified: false,  message: "email sent to your account please verify"
             });
     }
     }catch(err){
@@ -57,7 +59,7 @@ const signIn =async (req,res) =>{
         password = password.trim(); 
     
         if(email == "" || password == ""){
-            res.json({status: "Failed" ,message:"Empty credentials"});
+            res.status(403).json({status: "Failed" ,message:"Empty credentials"});
         }
         else{
             User.find({email}).then(data =>{
@@ -65,20 +67,27 @@ const signIn =async (req,res) =>{
                     const hashedPassword =  data[0].password;
                     bcrypt.compare(password, hashedPassword).then(result =>{
                         if (result){
-                            res.json({status: "Success" ,message:"login Successful", data: data});
+                            let response = {
+                                success: true,
+                                message: "Successfully login"
+                            }
+                            if(data[0].is_verified == false)
+                                response.is_verified = false;
+                            else
+                                response.is_verified = true;
+                            res.status(200).send(response);
                         }
                         else{
-                            res.json({status: "Failed" ,message:"invalid credentials"});   
+                            res.status(400).json({success: false, message: "Invalid credentials"});   
                         }
                     });
                 }
             }).catch(err =>{
-                res.json({status: "Failed" ,message:"error occured"});
-            })
+                res.status(400).json({success: false, message: "Invalid credentials"});
+            });
         }
-
     }catch(error){
-        res.json({status: "Failed" ,message:"Server Error"});
+        res.json({success: false ,message:"Server Error"});
     }
 
 }
@@ -133,3 +142,30 @@ const sendEmailVerification = async (email, subject, text) => {
     }
 }
 module.exports = {signUp, signIn, verifyEmail};
+
+const generateTokens= async (user)=>{
+    try{
+        const payload={_id:user._id,roles:user.roles};
+        const accessToken = jwt.sign(
+            payload,
+            process.env.ACCESS_TOKEN_PRIVATE_KEY,
+            {expiresIn:"14m"}
+        );
+        
+        const refreshToken = jwt.sign(
+            payload,
+            process.env.REFRESH_TOKEN_PRIVATE_KEY,
+            {expiresIn:"30d"}
+        );
+        
+        const userToken= await UserToken.findOne({userId:user._id});
+        if(userToken) await userToken.remove();
+
+        await new UserToken({userId:user._id,token:refreshToken}).save();
+        return Promise.resolve({accessToken,refreshToken});
+        
+    }catch(err){
+        return Promise.reject(err);
+    }
+
+}
