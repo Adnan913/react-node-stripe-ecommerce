@@ -10,6 +10,8 @@ const StripeRoute = require('./components/stripe/stripeRoute');
 const authMiddleware = require('./middlewares/authMiddleware');
 const UserToken = require('./components/authentication/model/userTokenModel');
 
+const {generateToken} = require('./components/authentication/controller/userController');
+
 app.use(express.json());
 
 app.use('/user',UserRoute);
@@ -29,7 +31,9 @@ app.get("/auth/dashboard", authMiddleware, async(req, res)=>{
     res.send({success: true, message: "dashboard"});
   else
     res.send({success: false, message: "unauthenticated"});
-})
+});
+
+app.post("/gen_token",generateToken);
 
 app.listen(5252, () =>
   console.log(`Node server listening at http://localhost:5252`)

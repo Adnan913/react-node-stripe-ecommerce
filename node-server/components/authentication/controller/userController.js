@@ -20,8 +20,7 @@ const signUp = async (req, res) =>{
                 status: "Failed", message: "Empty input fields"
             });
         }
-        let user = await User.find({email});
-        
+        let user = await User.findOne({email});
         if(user){
             return res.status(400).send({
                 status: "Failed", message: "User already exist!"
@@ -71,11 +70,19 @@ const signIn =async (req,res) =>{
                                 success: true,
                                 message: "Successfully login"
                             }
+                            
                             if(data[0].is_verified == false)
                                 response.is_verified = false;
                             else
                                 response.is_verified = true;
-                            res.status(200).send(response);
+                            const token =  generateToken((data[0]._id).toString(), data[0].role);
+                            
+                            if(token.success == true){
+                                response['token'] = token;
+                                res.status(200).send(response);
+                            }else{
+                                res.status(401).send(response);
+                            }
                         }
                         else{
                             res.status(400).json({success: false, message: "Invalid credentials"});   
@@ -95,20 +102,21 @@ const signIn =async (req,res) =>{
 const verifyEmail = async (req, res) => {
     try{
         let user = await User.findOne({_id: req.params.id});
-    
+        
         if(!user) return res.status(400).send({message: "Invalid Link"});
-        let verify = await UserVerification.findOne({
+        let verify = await UserEmailVerification.findOne({
             userId: user._id,
             token: req.params.token
         });
-    
+        
         if(!verify) return  res.status(400).send({message: "Invalid Link"});
-    
+        
         await User.updateOne({_id:user._id},{is_verified:true})
                   .then(result=>console.log("Updated Docs : ", result))
                   .catch(error=>console.log(error));
-        
         await verify.deleteOne();
+        
+        const token = generateToken(user._id , user.role);
         
         res.status(200).send({message: "Email verified successfully"});
     }catch(err){
@@ -141,31 +149,38 @@ const sendEmailVerification = async (email, subject, text) => {
         console.log(err);
     }
 }
-module.exports = {signUp, signIn, verifyEmail};
 
-const generateTokens= async (user)=>{
+
+const generateToken =  (userId, role) => {
     try{
-        const payload={_id:user._id,roles:user.roles};
-        const accessToken = jwt.sign(
+        const payload={ userId, role };
+        const token = jwt.sign(
             payload,
-            process.env.ACCESS_TOKEN_PRIVATE_KEY,
-            {expiresIn:"14m"}
-        );
-        
-        const refreshToken = jwt.sign(
-            payload,
-            process.env.REFRESH_TOKEN_PRIVATE_KEY,
-            {expiresIn:"30d"}
-        );
-        
-        const userToken= await UserToken.findOne({userId:user._id});
-        if(userToken) await userToken.remove();
+            process.env.JWT_PRIVATE_KEY,
+            {expiresIn: process.env.JWT_TOKEN_EXPIRES_IN}              
+        );    
+        if(token){
+               new UserToken({token}).save();
+               let response = {
+                success: true,
+                message: "Created token successfully",
+                token: token
+               }
+               return  response;
+            }
+            else{
+                let errResponse = {
+                    success: false,
+                    message: "Got an error while creation of an token",
+                    error: err
+                };
+                return errResponse;
+            }
 
-        await new UserToken({userId:user._id,token:refreshToken}).save();
-        return Promise.resolve({accessToken,refreshToken});
-        
     }catch(err){
-        return Promise.reject(err);
+        return {err};
     }
 
 }
+
+module.exports = {signUp, signIn, verifyEmail, generateToken};
